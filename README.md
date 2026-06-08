@@ -1,48 +1,61 @@
+<p align="right">
+  <a href="README.md">English</a> ·
+  <a href="README.ru.md">Русский</a> ·
+  <a href="README.he.md">עברית</a>
+</p>
+
 # Pico HSM Manager
 
-Универсальный графический интерфейс для управления **Pico HSM** и **Pico FIDO2** на Windows.
+A Windows GUI application for managing **Pico HSM** and **Pico FIDO2** devices — keys, certificates, and built-in SSH agent.
 
-## Быстрый старт
+## Quick Start
 
-1. Скачайте `PicoHSMManager.exe`
-2. Запустите (потребуются права администратора для FIDO2 и SSH-агента)
-3. Подключите устройство, введите PIN
-4. Управляйте ключами, сертификатами, SSH-агентом
+1. Download `PicoHSMManager.exe` from [Releases](../../releases)
+2. Run it (administrator privileges required for FIDO2 and SSH agent)
+3. Connect your device, enter PIN
+4. Manage keys, certificates, and the SSH agent
 
-## Возможности
+## Features
 
 ### Pico HSM
-- Создание ключей: RSA (2048–4096), EC (secp, brainpool, Ed25519, Ed448), ECDH (X25519, X448), AES (128–256)
-- Просмотр/экспорт публичных ключей (PEM, SSH)
-- Управление метками и сертификатами (EE/CA CVC)
-- Сброс устройства, смена PIN/SO PIN
-- Информация об устройстве, Press-to-Confirm
+- **Key generation**: RSA (2048–4096), EC (secp256r1/384r1/521r1/256k1, brainpoolP256r1/384r1/512r1, Ed25519, Ed448), ECDH (X25519, X448), AES (128–256)
+- View & export public keys (PEM, SSH authorized_keys format)
+- Set key labels (tags)
+- View EE certificates (CVC), write CA certificates (CVC)
+- Factory reset with new PIN/SO PIN
+- Change PIN / SO PIN
+- Device info (firmware version, memory, PIN retries)
+- Press-to-Confirm toggle
 
 ### Pico FIDO2
-- Регистрация и проверка WebAuthn credential'ов
-- Управление резидентными ключами
-- Экспорт SSH (sk-ecdsa / sk-ed25519)
-- Смена PIN, сброс
+- Register and verify WebAuthn credentials
+- Manage resident (discoverable) credentials
+- Export SSH public keys (`sk-ecdsa-sha2-nistp256@openssh.com` / `sk-ed25519@openssh.com`)
+- Change FIDO2 PIN, factory reset
+- Device info
 
-### Встроенный SSH-агент
-- Совместим с **Pageant** (WM_COPYDATA) и **OpenSSH** (named pipe `\\.\pipe\openssh-ssh-agent`)
-- Работает с ключами Pico HSM и Pico FIDO2
-- Мультивыбор ключей, запрос подтверждения подписи, автостарт
+### Built-in SSH Agent
+- Compatible with **Pageant** (WM_COPYDATA) — PuTTY, KiTTY, NetBox, WinSCP
+- Compatible with **OpenSSH** (named pipe `\\.\pipe\openssh-ssh-agent`) — `ssh.exe`
+- Supports both Pico HSM and Pico FIDO2 keys
+- Multi-key selection, per-signature approval prompt
+- Auto-start on device connect
+- Built-in agent test tool
 
-## Интерфейс
-- Русский / English / עברית
-- Тёмная и светлая темы
-- Сохранение настроек окна
+### Interface
+- Languages: English, Russian, Hebrew
+- Dark & light themes
+- Window geometry and settings persistence
 
-## Системные требования
+## System Requirements
 - Windows 10 / 11 (x64)
-- OpenSSH Client (для работы через `ssh.exe`) — предустановлен в Windows 10 1809+
-- Для FIDO2: права администратора (HID-доступ)
+- OpenSSH Client (built-in on Windows 10 1809+) — only needed for `ssh.exe` integration
+- Administrator privileges (for FIDO2 HID access and named pipe SSH agent)
 
-## Примечания
-- При использовании с настоящим Pageant возможны конфликты — запускайте только один экземпляр: `taskkill /f /im pageant.exe`
-- Логи: `%TEMP%\hsm_agent.log` и `%TEMP%\hsm_agent_crash.log`
-- Файл настроек: `hsm_guir.json` (создаётся рядом с exe)
+## Notes
+- If you have the real Pageant running, close it first: `taskkill /f /im pageant.exe`
+- Logs: `%TEMP%\hsm_agent.log` and `%TEMP%\hsm_agent_crash.log`
+- Config: `hsm_guir.json` (created next to the executable)
 
-## Лицензия
+## License
 MIT
