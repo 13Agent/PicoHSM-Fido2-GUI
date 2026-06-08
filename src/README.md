@@ -1,128 +1,134 @@
+<p align="right">
+  <a href="README-source.md">English</a> ·
+  <a href="README-source.ru.md">Русский</a> ·
+  <a href="README-source.he.md">עברית</a>
+</p>
+
 # Pico HSM Manager (hsm_guir.py)
 
-Универсальный графический интерфейс для управления устройствами **Pico HSM** и **Pico FIDO2** на Windows.
+A universal Windows GUI for managing **Pico HSM** and **Pico FIDO2** devices.
 
-## Возможности
+## Features
 
 ### Pico HSM
-- Подключение по PIN-коду
-- Создание ключей: RSA (2048/3072/4096), EC (secp256r1/384r1/521r1/256k1, brainpoolP256r1/384r1/512r1, Ed25519, Ed448), ECDH (X25519, X448), AES (128/192/256)
-- Просмотр публичных ключей (PEM, SSH-формат)
-- Экспорт SSH-ключей (копирование в буфер / сохранение в файл)
-- Установка меток (label) ключей
-- Просмотр EE-сертификатов (CVC)
-- Запись CA-сертификатов (CVC)
-- Удаление ключей
-- Сброс устройства (Factory Reset) со сменой PIN/SO PIN
-- Смена PIN / SO PIN
-- Информация об устройстве (версия прошивки, память, попытки PIN)
-- Управление Press-to-Confirm
+- PIN-based connection
+- Key generation: RSA (2048/3072/4096), EC (secp256r1/384r1/521r1/256k1, brainpoolP256r1/384r1/512r1, Ed25519, Ed448), ECDH (X25519, X448), AES (128/192/256)
+- View public keys (PEM, SSH format)
+- Export SSH keys (clipboard / file)
+- Set key labels
+- View EE certificates (CVC)
+- Write CA certificates (CVC)
+- Delete keys
+- Factory reset with PIN/SO PIN change
+- Change PIN / SO PIN
+- Device info (firmware version, memory, PIN retries)
+- Press-to-Confirm control
 
 ### Pico FIDO2
-- Подключение через HID
-- Регистрация WebAuthn credential'ов
-- Проверка (get assertion)
-- Управление резидентными ключами
-- Экспорт SSH-ключей (sk-ecdsa-sha2-nistp256@openssh.com / sk-ed25519@openssh.com)
-- Смена PIN FIDO2
-- Сброс устройства
+- HID connection
+- Register WebAuthn credentials
+- Verify (get assertion)
+- Manage resident keys
+- Export SSH keys (sk-ecdsa-sha2-nistp256@openssh.com / sk-ed25519@openssh.com)
+- Change FIDO2 PIN
+- Factory reset
 
-### SSH-агент
-- Встроенный SSH-агент, совместимый с **Pageant** (WM_COPYDATA) и **OpenSSH** (named pipe `\\.\pipe\openssh-ssh-agent`)
-- Поддержка ключей как с Pico HSM, так и с Pico FIDO2
-- Выбор множества ключей для агента
-- Запрос подтверждения на каждую операцию подписи (опционально)
-- Автостарт при подключении
-- GUI-тест агента (список ключей, тестовая подпись)
+### SSH Agent
+- Built-in SSH agent compatible with **Pageant** (WM_COPYDATA) and **OpenSSH** (named pipe `\\.\pipe\openssh-ssh-agent`)
+- Supports both Pico HSM and Pico FIDO2 keys
+- Multi-key selection for the agent
+- Optional signature approval prompt
+- Auto-start on connect
+- GUI agent test (key list, test signature)
 
-### Интерфейс
-- Двуязычный интерфейс: Русский / English / עברית
-- Тёмная и светлая темы
-- Сохранение геометрии окна и настроек
+### Interface
+- Languages: English, Russian, Hebrew
+- Dark and light themes
+- Window geometry and settings persistence
 
-## Зависимости
+## Dependencies
 
 - Python 3.7+
-- `picohsm` — библиотека для работы с Pico HSM
-- `cryptography` — криптографические операции
-- `cvc` — работа с CVC-сертификатами
-- `tkinter` — входит в состав Python (Windows)
-- `fido2` (опционально) — поддержка Pico FIDO2
-- `cbor2` или `cbor` (опционально, для fido2)
+- `picohsm` — Pico HSM library
+- `cryptography` — cryptographic operations
+- `cvc` — CVC certificate handling
+- `tkinter` — included with Python (Windows)
+- `fido2` (optional) — Pico FIDO2 support
+- `cbor2` or `cbor` (optional, for fido2)
 
-Установка зависимостей:
+Install dependencies:
 
 ```bash
 pip install picohsm cryptography cvc fido2 cbor2
 ```
 
-## Использование
+## Usage
 
-### Готовая сборка (EXE)
+### Pre-built EXE
 
-Скачайте `PicoHSMManager.exe` из [releases](../../releases) — запускайте напрямую (без Python).
+Download `PicoHSMManager.exe` from [releases](../../releases) — run directly (no Python required).
 
-### Из исходного кода
+### From source
 
 ```bash
 pip install picohsm cryptography cvc fido2 cbor2
 python hsm_guir.py
 ```
 
-При запуске без прав администратора скрипт запросит повышение привилегий (требуется для HID-доступа к FIDO2 и для работы SSH-агента).
+When launched without administrator privileges, the script auto-elevates (required for FIDO2 HID access and SSH agent).
 
-### Режимы
+### Modes
 
-Переключение между режимами **Pico HSM** и **Pico FIDO2** — через выпадающий список в верхней панели. Приложение автоматически определяет подключённое устройство.
+Switch between **Pico HSM** and **Pico FIDO2** modes via the dropdown in the top panel. The application auto-detects the connected device.
 
-### SSH-агент
+### SSH Agent
 
-1. Подключитесь к устройству.
-2. Перейдите на вкладку **SSH Agent**.
-3. Выберите ключи из списка (Ctrl+Click / Shift+Click для множественного выбора).
-4. Нажмите **Start**.
+1. Connect to your device.
+2. Switch to the **SSH Agent** tab.
+3. Select keys from the list (Ctrl+Click / Shift+Click for multi-select).
+4. Click **Start**.
 
-Агент будет доступен:
-- PuTTY / Kitty / NetBox / WinSCP — через Pageant (WM_COPYDATA)
-- OpenSSH (ssh.exe) — через named pipe `\\.\pipe\openssh-ssh-agent`
+The agent is accessible from:
+- PuTTY / Kitty / NetBox / WinSCP — via Pageant (WM_COPYDATA)
+- OpenSSH (ssh.exe) — via named pipe `\\.\pipe\openssh-ssh-agent`
 
-Если у вас запущен настоящий Pageant, его нужно остановить:
+If you have the real Pageant running, stop it first:
 ```
 taskkill /f /im pageant.exe
 ```
 
-## Конфигурация
+## Configuration
 
-Файл настроек: `hsm_guir.json` (создаётся автоматически в директории скрипта).
+Config file: `hsm_guir.json` (auto-created in the script directory).
 
-Параметры:
-- `geometry` — положение и размер окна
-- `theme` — "light" или "dark"
+Parameters:
+- `geometry` — window position and size
+- `theme` — "light" or "dark"
 - `lang` — "en", "ru", "he"
 
-Логи:
-- `%TEMP%\hsm_agent.log` — основной лог
-- `%TEMP%\hsm_agent_crash.log` — лог ошибок SSH-агента
+Logs:
+- `%TEMP%\hsm_agent.log` — main log
+- `%TEMP%\hsm_agent_crash.log` — SSH agent error log
 
-## Сборка EXE
+## Building EXE
 
 ```bash
 pip install pyinstaller
 python -m PyInstaller --clean --onefile --uac-admin --windowed --name "PicoHSMManager" hsm_guir.py
 ```
 
-Готовый `.exe` появится в `dist/`.
+The executable will be in `dist/`.
 
-## Зависимости (периферийные)
+## Peripheral dependencies
 
-- **pkcs11-tool.exe** (из [OpenSC](https://github.com/OpenSC/OpenSC/wiki)) — опционально, используется для уточнения названий кривых у EC-ключей. Путь по умолчанию: `C:\Program Files\OpenSC Project\OpenSC\tools\pkcs11-tool.exe`. Если отсутствует, типы ключей определяются из CVC-сертификатов.
+- **pkcs11-tool.exe** (from [OpenSC](https://github.com/OpenSC/OpenSC/wiki)) — optional, used for refining EC curve names. Default path: `C:\Program Files\OpenSC Project\OpenSC\tools\pkcs11-tool.exe`. If missing, key types are determined from CVC certificates.
 
-## Примечания
+## Notes
 
-- FIDO2 HID-доступ требует прав администратора.
-- Для работы SSH-агента через named pipe OpenSSH требуется Windows 10 1809+ с установленным компонентом OpenSSH Client.
-- При одновременном использовании с настоящим Pageant возможны конфликты — используйте только один экземпляр.
+- FIDO2 HID access requires administrator privileges.
+- SSH agent via OpenSSH named pipe requires Windows 10 1809+ with the OpenSSH Client component installed.
+- Conflicts may occur when used alongside the real Pageant — run only one instance.
 
-## Лицензия
+## License
 
 MIT
