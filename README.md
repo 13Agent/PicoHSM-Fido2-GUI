@@ -97,6 +97,10 @@ taskkill /f /im pageant.exe
 - `%TEMP%\hsm_agent.log` — основной лог
 - `%TEMP%\hsm_agent_crash.log` — лог ошибок SSH-агента
 
+## Зависимости (периферийные)
+
+- **pkcs11-tool.exe** (из [OpenSC](https://github.com/OpenSC/OpenSC/wiki)) — опционально, используется для уточнения названий кривых у EC-ключей. Путь по умолчанию: `C:\Program Files\OpenSC Project\OpenSC\tools\pkcs11-tool.exe`. Если отсутствует, типы ключей определяются из CVC-сертификатов.
+
 ## Примечания
 
 - FIDO2 HID-доступ требует прав администратора.
