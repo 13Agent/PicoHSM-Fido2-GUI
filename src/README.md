@@ -58,7 +58,14 @@ pip install picohsm cryptography cvc fido2 cbor2
 
 ## Использование
 
+### Готовая сборка (EXE)
+
+Скачайте `PicoHSMManager.exe` из [releases](../../releases) — запускайте напрямую (без Python).
+
+### Из исходного кода
+
 ```bash
+pip install picohsm cryptography cvc fido2 cbor2
 python hsm_guir.py
 ```
 
@@ -96,6 +103,15 @@ taskkill /f /im pageant.exe
 Логи:
 - `%TEMP%\hsm_agent.log` — основной лог
 - `%TEMP%\hsm_agent_crash.log` — лог ошибок SSH-агента
+
+## Сборка EXE
+
+```bash
+pip install pyinstaller
+python -m PyInstaller --clean --onefile --uac-admin --windowed --name "PicoHSMManager" hsm_guir.py
+```
+
+Готовый `.exe` появится в `dist/`.
 
 ## Зависимости (периферийные)
 
