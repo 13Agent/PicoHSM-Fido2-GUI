@@ -1,7 +1,7 @@
 <p align="right">
-  <a href="README-source.md">English</a> ·
-  <a href="README-source.ru.md">Русский</a> ·
-  <a href="README-source.he.md">עברית</a>
+  <a href="README.md">English</a> ·
+  <a href="README.ru.md">Русский</a> ·
+  <a href="README.he.md">עברית</a>
 </p>
 
 <div dir="rtl">
