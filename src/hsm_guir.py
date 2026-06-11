@@ -97,6 +97,7 @@ ERROR_LOG = os.path.join(tempfile.gettempdir(), "hsm_agent_crash.log")
 AGENT_LOG  = os.path.join(tempfile.gettempdir(), "hsm_agent.log")
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hsm_guir.json")
 KEY_ALGOS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "key_algos.json")
+STATS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "stats.json")
 
 import logging as _logging
 _agent_logger = _logging.getLogger("pico_hsm_agent")
@@ -140,6 +141,8 @@ _TR = {
         "Show public key": "Показать публичный ключ",
         "Export SSH": "Экспорт SSH",
         "Delete key": "Удалить ключ",
+        "Delete selected": "Удалить выбранные",
+        "Delete all keys": "Удалить все ключи",
         "Set label": "Задать метку",
         "Show EE cert": "Показать EE-сертификат",
         "Write CA cert": "Записать CA-сертификат",
@@ -336,6 +339,7 @@ _TR = {
         "keys": "ключей",
         "All keys already in ": "Все ключи уже есть в ",
         "Minimize to tray": "Сворачивать в трей",
+        "FIDO2 only": "Только FIDO2",
         "Show": "Показать",
         "Encrypt file": "Зашифровать файл",
         "Decrypt file": "Расшифровать файл",
@@ -363,6 +367,15 @@ _TR = {
         "All credentials and PIN will be deleted.": "Все учётные записи и PIN будут удалены.",
         "FIDO2 device reset.": "FIDO2-устройство сброшено.",
         "About": "О программе",
+        "Statistics": "Статистика",
+        "Session uptime:": "Время сессии:",
+        "Keys created:": "Ключей создано:",
+        "Keys deleted:": "Ключей удалено:",
+        "SSH signatures:": "SSH-подписей:",
+        "File encryptions:": "Файлов зашифровано:",
+        "File decryptions:": "Файлов расшифровано:",
+        "HSM connections:": "HSM-подключений:",
+        "FIDO2 connections:": "FIDO2-подключений:",
         "Help": "Помощь",
     },
     "he": {
@@ -380,6 +393,8 @@ _TR = {
         "Show public key": "הצג מפתח ציבורי",
         "Export SSH": "ייצוא SSH",
         "Delete key": "מחק מפתח",
+        "Delete selected": "מחק מפתחות נבחרים",
+        "Delete all keys": "מחק את כל המפתחות",
         "Set label": "הגדר תווית",
         "Show EE cert": "הצג תעודת EE",
         "Write CA cert": "כתוב תעודת CA",
@@ -657,9 +672,11 @@ def _flat_key_types():
 KEY_TYPES = _flat_key_types()
 
 class PicoHSMGUI:
-    def __init__(self, root):
+    def __init__(self, root, fido2_only=False):
         self.root = root
-        self.root.title("Pico HSM Manager")
+        self._fido2_only = fido2_only
+        self._fido2_only_var = tk.BooleanVar(value=self._fido2_only)
+        self.root.title("Pico FIDO2 Manager" if fido2_only else "Pico HSM Manager")
         self.root.minsize(640, 540)
 
         self.hsm = None
@@ -668,7 +685,7 @@ class PicoHSMGUI:
         self._key_algos = {}
         self._load_key_algos()
         self.status_var = tk.StringVar(value=T("Disconnected"))
-        self._device_mode = tk.StringVar(value="Pico HSM")
+        self._device_mode = tk.StringVar(value="Pico FIDO2" if fido2_only else "Pico HSM")
 
         self.root.configure(bg="#2b2b2b")
 
@@ -678,6 +695,8 @@ class PicoHSMGUI:
         self._fido2_info = None
         self._fido2_resident_keys = []
         self._fido2_pin_cache = None
+        self._f2_dev_label = ""
+        self._hsm_dev_name = ""
         self._f2_agent_creds = {}
 
         self._agent_auto_start_var = tk.BooleanVar(value=False)
@@ -688,10 +707,18 @@ class PicoHSMGUI:
         self._pin_cache_timeout_var = tk.IntVar(value=5)
         self._pin_cache_ts = 0
 
+        self._stats = self._load_stats()
+
         self._apply_style()
         self._build_ui()
         self._restore_geometry()
-        self.root.after(200, self._auto_detect_mode)
+        if self._fido2_only:
+            self._m_keys.entryconfig(1, state="disabled")
+            self._switch_mode()
+            self.root.after(200, self._auto_detect_mode)
+            self.root.after(500, self._f2_connect)
+        else:
+            self.root.after(200, self._auto_detect_mode)
 
     def _apply_style(self):
         style = ttk.Style()
@@ -866,8 +893,10 @@ class PicoHSMGUI:
         m_dev.add_command(label=T("Exit"), command=self.root.quit)
         menubar.add_cascade(label=T("Device"), menu=m_dev)
         m_keys = tk.Menu(menubar, tearoff=0)
-        m_keys.add_command(label=T("Delete key"), command=self.delete_key)
+        m_keys.add_command(label=T("Delete selected"), command=self.delete_selected_keys)
         m_keys.add_command(label=T("Write CA cert"), command=self.write_ca_cert)
+        m_keys.add_separator()
+        m_keys.add_command(label=T("Delete all keys"), command=self._hsm_delete_all)
         menubar.add_cascade(label=T("Keys"), menu=m_keys)
         self._m_keys = m_keys
         self._m_dev = m_dev
@@ -887,19 +916,23 @@ class PicoHSMGUI:
         m_settings.add_cascade(label=T("Theme"), menu=m_theme)
         m_settings.add_checkbutton(label=T("Minimize to tray"), variable=self._tray_var,
                                    command=self._on_tray_toggle)
+        m_settings.add_checkbutton(label=T("FIDO2 only"), variable=self._fido2_only_var,
+                                   command=self._on_fido2_only_toggle)
         menubar.add_cascade(label="Settings", menu=m_settings)
         m_help = tk.Menu(menubar, tearoff=0)
+        m_help.add_command(label=T("Statistics"), command=self._stats_dialog)
         m_help.add_command(label=T("About"), command=self._about_dialog)
         menubar.add_cascade(label=T("Help"), menu=m_help)
-        self._menu_cmds = [(m_keys, 0), (m_keys, 1), (m_dev, 0), (m_dev, 1), (m_dev, 3)]
+        self._menu_cmds = [(m_keys, 0), (m_keys, 1), (m_keys, 3), (m_dev, 0), (m_dev, 1), (m_dev, 3)]
         self._toggle_menu("disabled")
 
         top = ttk.Frame(self.root, padding=4)
         top.pack(fill=tk.X)
 
         ttk.Label(top, text=T("Device mode:")).pack(side=tk.LEFT, padx=(0,2))
+        modes = ["Pico FIDO2"] if self._fido2_only else ["Pico HSM", "Pico FIDO2"]
         self._mode_combo = ttk.Combobox(top, textvariable=self._device_mode,
-                                         values=["Pico HSM", "Pico FIDO2"], state="readonly", width=12)
+                                         values=modes, state="readonly", width=12)
         self._mode_combo.pack(side=tk.LEFT, padx=(0,6))
         self._mode_combo.bind("<<ComboboxSelected>>", self._switch_mode)
 
@@ -986,7 +1019,9 @@ class PicoHSMGUI:
         self.btn_encrypt.pack(pady=1)
         self.btn_decrypt = ttk.Button(hsm_mid, text=T("Decrypt file"), command=self._decrypt_file, width=18)
         self.btn_decrypt.pack(pady=1)
-        for b in (self.btn_gen, self.btn_view, self.btn_ssh, self.btn_label, self.btn_cert, self.btn_encrypt, self.btn_decrypt, self.btn_refresh):
+        self.btn_export_all_hsm = ttk.Button(hsm_mid, text=T("Export all SSH"), command=self._hsm_export_all_ssh, width=18)
+        self.btn_export_all_hsm.pack(pady=1)
+        for b in (self.btn_gen, self.btn_view, self.btn_ssh, self.btn_label, self.btn_cert, self.btn_encrypt, self.btn_decrypt, self.btn_refresh, self.btn_export_all_hsm):
             b.state(["disabled"])
 
         self._hsm_pane.pack(fill=tk.BOTH, expand=True, padx=6, pady=4)
@@ -1077,6 +1112,7 @@ class PicoHSMGUI:
                 "refresh_interval": self._refresh_interval_var.get(),
                 "pin_cache_timeout": self._pin_cache_timeout_var.get(),
                 "minimize_to_tray": self._tray_var.get(),
+                "fido2_only": self._fido2_only_var.get(),
             }
             with open(CONFIG_PATH, "w", encoding="utf-8") as f:
                 json.dump(data, f)
@@ -1109,6 +1145,14 @@ class PicoHSMGUI:
 
     def _poll_device(self):
         try:
+            if self._fido2_only:
+                if HAS_FIDO2 and ctypes.windll.shell32.IsUserAnAdmin() and not self._fido2_ctap2:
+                    devs = list(CtapHidDevice.list_devices())
+                    if devs:
+                        self._f2_detect()
+                if not self._fido2_ctap2:
+                    self.root.after(3000, self._poll_device)
+                return
             if HAS_FIDO2 and ctypes.windll.shell32.IsUserAnAdmin():
                 devs = list(CtapHidDevice.list_devices())
                 f2_found = len(devs) > 0
@@ -1189,11 +1233,13 @@ class PicoHSMGUI:
                 self._f2_export_all_btn.state(['!disabled'])
                 self._toggle_menu("normal")
                 self._m_keys.entryconfig(1, state="disabled")
+                self._m_keys.entryconfig(3, state="disabled")
                 self._f2_list_resident()
             else:
                 self.connect_btn.state(["!disabled"])
                 self.disconnect_btn.state(["disabled"])
             self._m_keys.entryconfig(1, state="disabled")
+            self._m_keys.entryconfig(3, state="disabled")
             self.root.after(100, self._f2_detect)
 
     def f2log(self, msg):
@@ -1291,13 +1337,25 @@ class PicoHSMGUI:
                 self.disconnect_btn.state(['disabled'])
                 self.connect_btn.state(['!disabled'])
                 return
-            dev = devs[0]
+            if len(devs) > 1:
+                self.f2log(f'{len(devs)} FIDO2 devices found, selecting...')
+                names = [f'{d.product_name} ({d.descriptor.path})' for d in devs]
+                sel = self._combo_choice(T("Select FIDO2 device"), names)
+                if sel is None:
+                    self.f2log(T('Connection cancelled'))
+                    self.disconnect_btn.state(['disabled'])
+                    self.connect_btn.state(['!disabled'])
+                    return
+                dev = devs[sel]
+            else:
+                dev = devs[0]
             ctap2 = Ctap2(dev)
             info = ctap2.get_info()
             self._fido2_devices = devs
             self._fido2_ctap2 = ctap2
             self._fido2_info = info
-            self.f2log(f'FIDO2: {dev.product_name} {" ".join(info.versions)}')
+            dev_label = f'{dev.product_name}'
+            self.f2log(f'FIDO2: {dev_label} {" ".join(info.versions)}')
             if info.options:
                 self.f2log(f'  Options: {info.options}')
             if info.pin_uv_protocols:
@@ -1312,7 +1370,10 @@ class PicoHSMGUI:
                 self.f2log(T('Connection cancelled'))
                 self._f2_disconnect()
                 return
-            self.status_var.set(T("Connected (PIN: ") + pin + ")")
+            self._f2_dev_label = dev_label
+            self.status_var.set(T("Connected (PIN: ") + pin + ")" + f" [{dev_label}]")
+            self._inc_stat('fido2_connects')
+            self._save_stats()
             self.disconnect_btn.state(['!disabled'])
             self.connect_btn.state(['disabled'])
             self._f2_list_btn.state(['!disabled'])
@@ -1335,6 +1396,7 @@ class PicoHSMGUI:
         self._fido2_ctap2 = None
         self._fido2_info = None
         self._fido2_resident_keys = []
+        self._f2_dev_label = ""
         self._f2_agent_creds = {}
         self._f2_tree.delete(*self._f2_tree.get_children())
         self._agent_keys()
@@ -1886,6 +1948,43 @@ class PicoHSMGUI:
         y = self.root.winfo_y() + (self.root.winfo_height() - d.winfo_height()) // 2
         d.geometry(f"+{x}+{y}")
 
+    def _combo_choice(self, title, options):
+        d = tk.Toplevel(self.root)
+        d.title(title)
+        d.geometry("500x200")
+        d.transient(self.root)
+        d.grab_set()
+        d.attributes('-topmost', True); d.lift()
+        self.root.deiconify(); self.root.lift(); self.root.update_idletasks()
+        d.attributes('-topmost', False)
+        result = [None]
+        def on_ok():
+            sel = lb.curselection()
+            if sel:
+                result[0] = sel[0]
+            d.destroy()
+        def on_cancel():
+            d.destroy()
+        f = ttk.Frame(d, padding=12)
+        f.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(f, text=title).pack(anchor=tk.W)
+        lb = tk.Listbox(f, height=6, selectmode=tk.SINGLE)
+        for o in options:
+            lb.insert(tk.END, o)
+        lb.bind('<Double-Button-1>', lambda e: on_ok())
+        lb.bind('<Return>', lambda e: on_ok())
+        lb.pack(fill=tk.BOTH, expand=True, pady=8)
+        lb.focus_set()
+        bf = ttk.Frame(f)
+        bf.pack(fill=tk.X)
+        ttk.Button(bf, text=T("OK"), command=on_ok).pack(side=tk.RIGHT, padx=4)
+        ttk.Button(bf, text=T("Cancel"), command=on_cancel).pack(side=tk.RIGHT, padx=4)
+        self.root.wait_window(d)
+        sel = result[0]
+        if sel:
+            return sel[0]
+        return None
+
     def _confirm(self, title, message, btn_yes="Yes", btn_no="No"):
         d = tk.Toplevel(self.root)
         d.title(title)
@@ -1976,6 +2075,56 @@ class PicoHSMGUI:
         ttk.Label(f, text="Pico HSM + FIDO2 + SSH Agent").pack()
         ttk.Button(f, text=T("Close"), command=d.destroy).pack(pady=(8,0))
 
+    def _load_stats(self):
+        try:
+            with open(STATS_PATH, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            return {'start_time': time.time(), 'keys_created': 0, 'keys_deleted': 0,
+                    'ssh_signs': 0, 'file_encrypts': 0, 'file_decrypts': 0,
+                    'hsm_connects': 0, 'fido2_connects': 0}
+
+    def _save_stats(self):
+        try:
+            with open(STATS_PATH, 'w', encoding='utf-8') as f:
+                json.dump(self._stats, f, ensure_ascii=False)
+        except:
+            pass
+
+    def _inc_stat(self, name, count=1):
+        self._stats.setdefault(name, 0)
+        self._stats[name] += count
+
+    def _stats_dialog(self):
+        s = self._stats
+        elapsed = time.time() - s.get('start_time', time.time())
+        def fmt(t):
+            h = int(t // 3600); m = int((t % 3600) // 60); s2 = int(t % 60)
+            return f"{h}h {m:02d}m {s2:02d}s"
+        lines = [
+            f"{T('Session uptime:')} {fmt(elapsed)}",
+            f"{T('Keys created:')} {s.get('keys_created', 0)}",
+            f"{T('Keys deleted:')} {s.get('keys_deleted', 0)}",
+            f"{T('SSH signatures:')} {s.get('ssh_signs', 0)}",
+            f"{T('File encryptions:')} {s.get('file_encrypts', 0)}",
+            f"{T('File decryptions:')} {s.get('file_decrypts', 0)}",
+            f"{T('HSM connections:')} {s.get('hsm_connects', 0)}",
+            f"{T('FIDO2 connections:')} {s.get('fido2_connects', 0)}",
+        ]
+        d = tk.Toplevel(self.root)
+        d.title(T("Statistics"))
+        d.geometry("300x260")
+        d.transient(self.root)
+        d.resizable(False, False)
+        d.attributes('-topmost', True); d.lift(); self.root.deiconify(); self.root.lift()
+        self.root.update_idletasks(); d.attributes('-topmost', False)
+        self._center_dialog(d)
+        f = ttk.Frame(d, padding=14)
+        f.pack(fill=tk.BOTH, expand=True)
+        for line in lines:
+            ttk.Label(f, text=line, font=("Consolas", 10)).pack(anchor=tk.W, pady=1)
+        ttk.Button(f, text=T("Close"), command=d.destroy).pack(pady=(8,0))
+
     def log(self, msg):
         if not hasattr(self, '_log_lines'):
             return
@@ -2064,9 +2213,15 @@ class PicoHSMGUI:
             self._f2_ssh_btn.config(text=T("Export SSH"))
             self._f2_export_all_btn.config(text=T("Export all SSH"))
             if self.hsm and self.hsm.is_logged():
-                self.status_var.set(T("Connected (PIN: ") + self._pin + ")")
+                s = T("Connected (PIN: ") + self._pin + ")"
+                if self._hsm_dev_name:
+                    s += f" [{self._hsm_dev_name}]"
+                self.status_var.set(s)
             elif self._fido2_ctap2 and self._fido2_pin_cache:
-                self.status_var.set(T("Connected (PIN: ") + self._fido2_pin_cache + ")")
+                s = T("Connected (PIN: ") + self._fido2_pin_cache + ")"
+                if self._f2_dev_label:
+                    s += f" [{self._f2_dev_label}]"
+                self.status_var.set(s)
             else:
                 self.status_var.set(T("Disconnected"))
             self.connect_btn.config(text=T("Connect"))
@@ -2101,7 +2256,7 @@ class PicoHSMGUI:
                 self._agent_status.set(T("Stopped"))
             else:
                 self._agent_status.set(T("Running (Pageant)"))
-            self._m_keys.entryconfig(0, label=T("Delete key"))
+            self._m_keys.entryconfig(0, label=T("Delete selected"))
             self._m_keys.entryconfig(1, label=T("Write CA cert"))
             self._m_dev.entryconfig(0, label=T("Device info"))
             self._m_dev.entryconfig(1, label=T("Change PIN"))
@@ -2128,6 +2283,16 @@ class PicoHSMGUI:
     def _on_tray_toggle(self):
         if not hasattr(self, '_tray_var') or not self._tray_var.get():
             self._tray_destroy()
+
+    def _on_fido2_only_toggle(self):
+        self._save_geometry()
+        script = os.path.abspath(__file__)
+        flag = '--fido2-only' if self._fido2_only_var.get() else ''
+        result = ctypes.windll.shell32.ShellExecuteW(
+            None, "runas", sys.executable, f'"{script}" {flag}', os.path.dirname(script), 1
+        )
+        if result > 32:
+            self.root.quit()
 
     def _on_restore_from_tray(self, event=None):
         if hasattr(self, '_tray_var') and self._tray_var.get():
@@ -2288,19 +2453,39 @@ class PicoHSMGUI:
         self.root.destroy()
 
     def connect(self):
+        from smartcard import listReaders
+        all_readers = listReaders()
+        # detect which readers are HSM by trying PicoKey (no login needed)
+        pico_readers = []
+        for i, r in enumerate(all_readers):
+            if 'Pico' not in r:
+                continue
+            try:
+                from picokey import PicoKey, Product
+                pk = PicoKey(slot=i)
+                if pk.product == Product.HSM:
+                    pico_readers.append((i, r))
+                pk.close()
+            except:
+                pass
+        if not pico_readers:
+            messagebox.showerror(T("Error"), T("No Pico HSM device found"))
+            return
         d = tk.Toplevel(self.root)
-        d.title(T("Enter PIN"))
-        d.geometry("300x120")
+        d.title(T("Connect"))
+        d.geometry("400x200")
         d.transient(self.root)
-        d.attributes('-topmost', True)
-        d.lift()
-        self.root.deiconify()
-        self.root.lift()
-        self.root.update_idletasks()
+        d.attributes('-topmost', True); d.lift()
+        self.root.deiconify(); self.root.lift(); self.root.update_idletasks()
         d.attributes('-topmost', False)
         self._center_dialog(d)
         f = ttk.Frame(d, padding=12)
         f.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(f, text=T("Device:")).pack(anchor=tk.W)
+        dev_names = [r for _, r in pico_readers]
+        dev_var = tk.StringVar(value=dev_names[0] if dev_names else "")
+        dev_combo = ttk.Combobox(f, textvariable=dev_var, values=dev_names, state="readonly", width=50)
+        dev_combo.pack(fill=tk.X, pady=(0,8))
         ttk.Label(f, text=T("PIN:")).pack(anchor=tk.W)
         e = ttk.Entry(f, show="*", width=30)
         e.pack(fill=tk.X, pady=(0,8))
@@ -2316,16 +2501,25 @@ class PicoHSMGUI:
             if not pin:
                 err.config(text=T("Enter PIN"))
                 return
+            sel_name = dev_var.get()
+            sel_slot = None
+            for i, r in pico_readers:
+                if r == sel_name:
+                    sel_slot = i
+                    break
+            if sel_slot is None:
+                err.config(text=T("Select a device"))
+                return
             d.destroy()
             self.connect_btn.config(text=T("Connecting..."))
             self.connect_btn.state(["disabled"])
             self.root.update_idletasks()
             def _do():
                 try:
-                    hsm = PicoHSM(pin=pin)
+                    hsm = PicoHSM(pin=pin, slot=sel_slot)
                     if not hsm.is_logged():
                         hsm.login(pin=pin)
-                    self.root.after(0, self._connect_ok, hsm, pin)
+                    self.root.after(0, self._connect_ok, hsm, pin, sel_name)
                 except Exception as ex:
                     self.root.after(0, self._connect_fail, str(ex))
             threading.Thread(target=_do, daemon=True).start()
@@ -2344,20 +2538,27 @@ class PicoHSMGUI:
             except:
                 pass
             self.hsm = None
+        self._hsm_dev_name = ""
         self._retries_var.set("")
         self.log(T("Disconnected from Pico HSM."))
         self.status_var.set(T("Disconnected"))
         self.connect_btn.state(["!disabled"])
         self.disconnect_btn.state(["disabled"])
         self.device_lbl.config(text="")
-        for b in (self.btn_gen, self.btn_view, self.btn_ssh, self.btn_label, self.btn_cert, self.btn_encrypt, self.btn_decrypt, self.btn_refresh):
+        for b in (self.btn_gen, self.btn_view, self.btn_ssh, self.btn_label, self.btn_cert, self.btn_encrypt, self.btn_decrypt, self.btn_refresh, self.btn_export_all_hsm):
             b.state(["disabled"])
         self._toggle_menu("disabled")
 
-    def _connect_ok(self, hsm, pin):
+    def _connect_ok(self, hsm, pin, dev_name=""):
+        self._inc_stat('hsm_connects')
+        self._save_stats()
         self.hsm = hsm
         self._pin = pin
-        self.status_var.set(T("Connected (PIN: ") + pin + ")")
+        self._hsm_dev_name = dev_name
+        label = T("Connected (PIN: ") + pin + ")"
+        if dev_name:
+            label += f" [{dev_name}]"
+        self.status_var.set(label)
         self.status_lbl.configure(style="Success.TLabel")
         self.connect_btn.config(text=T("Connect"))
         self.connect_btn.state(["disabled"])
@@ -2575,6 +2776,12 @@ class PicoHSMGUI:
                 pass
             self.keys_tree.insert("", tk.END, iid=str(kid), text=str(kid), values=(name, label))
         self.log(T("Keys found: ") + str(len(keys)))
+        if keys:
+            self.btn_export_all_hsm.state(["!disabled"])
+            self._m_keys.entryconfig(3, state="normal")
+        else:
+            self.btn_export_all_hsm.state(["disabled"])
+            self._m_keys.entryconfig(3, state="disabled")
         self._agent_keys()
 
     def _on_key_select(self, event):
@@ -2583,6 +2790,7 @@ class PicoHSMGUI:
             kid = int(sel[0])
             name, pub = self.keys.get(kid, ("?", None))
             self.status_var.set(T("Selected key ID ") + str(kid) + ": " + name)
+            self._m_keys.entryconfig(0, state="normal")
             for b in (self.btn_view, self.btn_ssh, self.btn_label, self.btn_cert):
                 b.state(["!disabled"])
             can_encrypt = "AES" in name or pub is not None and (isinstance(pub, rsa.RSAPublicKey) or "ECDH" in name)
@@ -2596,6 +2804,7 @@ class PicoHSMGUI:
             else:
                 self.btn_decrypt.state(["disabled"])
         else:
+            self._m_keys.entryconfig(0, state="disabled")
             for b in (self.btn_view, self.btn_ssh, self.btn_label, self.btn_cert, self.btn_encrypt, self.btn_decrypt):
                 b.state(["disabled"])
 
@@ -2701,6 +2910,66 @@ class PicoHSMGUI:
             except Exception as e:
                 self.log(T("Save error: ") + str(e))
 
+    def _hsm_export_all_ssh(self):
+        if not self.keys:
+            self._info(T("Info"), T("No keys to export."))
+            return
+        ssh_dir = os.path.expanduser("~/.ssh")
+        try:
+            os.makedirs(ssh_dir, exist_ok=True)
+        except Exception as e:
+            self.log(f"{T('Error:')} {ssh_dir}: {e}")
+            return
+        count = 0
+        for kid, (name, pub) in self.keys.items():
+            if pub is None:
+                continue
+            try:
+                ssh = self._to_ssh(pub, comment=f"pico-hsm-key-{kid}")
+                if not ssh:
+                    continue
+                fname = f"id_hsm_{kid}.pub"
+                fpath = os.path.join(ssh_dir, fname)
+                with open(fpath, "w", encoding="utf-8") as f:
+                    f.write(ssh + "\n")
+                self.log(f"{T('Saved:')} {fpath}")
+                count += 1
+            except Exception as e:
+                self.log(f"{T('Error:')} {kid}: {e}")
+        self.log(T("total") + f" {count} -> {ssh_dir}")
+
+    def _hsm_delete_all(self):
+        if not self.keys:
+            self._info(T("Info"), T("No keys to delete."))
+            return
+        msg = T("Delete ALL HSM keys?") + f"\n({len(self.keys)} keys)"
+        if not self._confirm(T("Confirm"), msg):
+            return
+        if not self._confirm(T("Confirm"), T("This cannot be undone. Continue?")):
+            return
+        self.log(T("Deleting all keys..."))
+        self._m_keys.entryconfig(3, state="disabled")
+        kids = list(self.keys.keys())
+        def _do():
+            ok = 0
+            for kid in kids:
+                try:
+                    self.hsm.delete_key(kid)
+                    self._key_algos.pop(kid, None)
+                    ok += 1
+                except Exception as e:
+                    self.log(f"{T('Error deleting')} {kid}: {e}")
+            self.root.after(0, self._hsm_delete_all_done, ok, len(kids))
+        threading.Thread(target=_do, daemon=True).start()
+
+    def _hsm_delete_all_done(self, ok, total):
+        self._inc_stat('keys_deleted', ok)
+        self._save_stats()
+        self._save_key_algos()
+        self._m_keys.entryconfig(3, state="normal")
+        self.log(T("Deleted") + f" {ok}/{total} " + T("keys."))
+        self.refresh_keys()
+
     def view_cert(self):
         kid = self._selected_kid()
         if kid is None:
@@ -2802,6 +3071,8 @@ class PicoHSMGUI:
                     with open(dst, "wb") as f:
                         f.write(b"ECH" + len(eph_pub_bytes).to_bytes(2, "big") + eph_pub_bytes + wrapped + iv + ct)
                 self.root.after(0, lambda: self.log(f"{T('Saved:')} {dst}"))
+                self._inc_stat('file_encrypts')
+                self._save_stats()
             except Exception as e:
                 msg = str(e)
                 if "6985" in msg:
@@ -2868,6 +3139,8 @@ class PicoHSMGUI:
                 with open(dst, "wb") as f:
                     f.write(pt)
                 self.root.after(0, lambda: self.log(f"{T('Saved:')} {dst} ({len(pt)} {T('bytes')})"))
+                self._inc_stat('file_decrypts')
+                self._save_stats()
             except Exception as e:
                 msg = str(e) or type(e).__name__
                 if "6985" in msg:
@@ -3216,6 +3489,8 @@ class PicoHSMGUI:
 
     def _gen_done(self, kid, name):
         self.log(f"{T('Key created! ID =')} {kid}  {T('Type =')} {name}")
+        self._inc_stat('keys_created')
+        self._save_stats()
         self._save_key_algos()
         self.refresh_keys()
 
@@ -3223,36 +3498,40 @@ class PicoHSMGUI:
         self.log(T("Generation error: ") + str(err))
         self._info(T("Error"), T("Generation error: ") + str(err))
 
-    def delete_key(self):
+    def delete_selected_keys(self):
         if self._device_mode.get() == 'Pico FIDO2':
             self._f2_delete()
             return
-        kid = self._selected_kid()
-        if kid is None:
+        sel = self.keys_tree.selection()
+        if not sel:
+            self._info(T("Warning"), T("Select at least one key from the list."))
             return
-        name, _ = self.keys.get(kid, ("?", None))
-        if not self._confirm(T("Confirm"), T("Delete key ID ") + str(kid) + f" ({name})?"):
+        kids = [int(sid) for sid in sel]
+        names = [self.keys.get(k, ("?", None))[0] for k in kids]
+        msg = T("Delete selected keys?") + "\n" + "\n".join(f"  {k} ({n})" for k, n in zip(kids, names))
+        if not self._confirm(T("Confirm"), msg):
             return
-        self.log(T("Deleting key ID ") + str(kid) + "...")
-
+        self.log(T("Deleting selected keys..."))
         def _do():
-            try:
-                self.hsm.delete_key(kid)
-                self.root.after(0, self._del_done, kid)
-            except Exception as e:
-                self.root.after(0, self._del_fail, str(e))
-
+            ok = 0
+            for kid in kids:
+                try:
+                    self.hsm.delete_key(kid)
+                    self._key_algos.pop(kid, None)
+                    ok += 1
+                    self.root.after(0, self.log, T("Key ID ") + str(kid) + " " + T("deleted."))
+                except Exception as e:
+                    self.root.after(0, self.log, f"{T('Error deleting')} {kid}: {e}")
+            self.root.after(0, self._del_selected_done, ok, len(kids))
         threading.Thread(target=_do, daemon=True).start()
 
-    def _del_done(self, kid):
-        self.log(T("Key ID ") + str(kid) + " " + T("deleted."))
-        self._key_algos.pop(kid, None)
+    def _del_selected_done(self, ok, total):
+        self._inc_stat('keys_deleted', ok)
+        self._save_stats()
         self._save_key_algos()
+        self._m_keys.entryconfig(0, state="disabled")
+        self.log(T("Deleted") + f" {ok}/{total} " + T("keys."))
         self.refresh_keys()
-
-    def _del_fail(self, err):
-        self.log(T("Delete error: ") + str(err))
-        self._info(T("Error"), T("Delete error: ") + str(err))
 
     def _load_key_algos(self):
         try:
@@ -4272,6 +4551,7 @@ class _SshAgentEngine:
                     return None
                 if len(sig) == 64:
                     alog("[sign] Ed25519 OK: raw 64 bytes")
+                    self._inc_stat('ssh_signs')
                     return sig
                 if len(sig) > 64 and sig[0] == 0x30:
                     alog("[sign] Ed25519: DER-wrapped, trying to unpack")
@@ -4283,6 +4563,7 @@ class _SshAgentEngine:
                         result = r_bytes + s_bytes
                         if len(result) == 64:
                             alog("[sign] Ed25519 OK: DER unpacked to 64 bytes")
+                            self._inc_stat('ssh_signs')
                             return result
                 alog(f"[sign] Ed25519 FAIL: unexpected sig format len={len(sig)} first_byte={sig[0]:02x}", 'error')
                 return None
@@ -4298,6 +4579,7 @@ class _SshAgentEngine:
                     r_bytes = r.to_bytes(pad, "big")
                     s_bytes = s.to_bytes(pad, "big")
                     alog(f"[sign] ECDSA OK: {pad*2} bytes")
+                    self._inc_stat('ssh_signs')
                     return r_bytes + s_bytes
                 alog(f"[sign] ECDSA FAIL: DER parse failed", 'error')
                 return None
@@ -4333,6 +4615,7 @@ class _SshAgentEngine:
                 alog(f"[sign] RSA k={k} di_len={len(di)} pad_len={pad_len} padded_len={len(padded)}")
                 result = bytes(self.hsm.sign(kid, padded, scheme=Algorithm.ALGO_RSA_RAW))
                 alog(f"[sign] RSA OK: {len(result)} bytes sig_prefix={result[:8].hex()}")
+                self._inc_stat('ssh_signs')
                 return result
         except Exception as e:
             import traceback
@@ -4875,13 +5158,22 @@ def _fido2_build_pubkey_blob(algo, raw_bytes):
 
 
 if __name__ == "__main__":
+    fido2_only = '--fido2-only' in sys.argv
+    if not fido2_only:
+        try:
+            with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+                cfg = json.load(f)
+                fido2_only = cfg.get('fido2_only', False)
+        except:
+            pass
     if not ctypes.windll.shell32.IsUserAnAdmin():
         script = os.path.abspath(__file__)
+        params = f'"{script}" --fido2-only' if fido2_only else f'"{script}"'
         result = ctypes.windll.shell32.ShellExecuteW(
-            None, "runas", sys.executable, script, os.path.dirname(script), 1
+            None, "runas", sys.executable, params, os.path.dirname(script), 1
         )
         if result > 32:
             sys.exit(0)
     root = tk.Tk()
-    PicoHSMGUI(root)
+    PicoHSMGUI(root, fido2_only=fido2_only)
     root.mainloop()
