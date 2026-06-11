@@ -4429,9 +4429,14 @@ class _SshAgentEngine:
         except:
             pass
         if self._hwnd:
-            self._user32.DestroyWindow(self._hwnd)
+            # If subclassed, restore original wndproc instead of destroying
+            if getattr(self, '_subclassed', False) and getattr(self, '_old_wndproc', None):
+                GWLP_WNDPROC = -4
+                self._user32.SetWindowLongPtrW(self._hwnd, GWLP_WNDPROC, self._old_wndproc)
+            else:
+                self._user32.DestroyWindow(self._hwnd)
             self._hwnd = 0
-        if getattr(self, '_hinstance', None):
+        if getattr(self, '_hinstance', None) and not getattr(self, '_subclassed', False):
             self._user32.UnregisterClassW("Pageant", self._hinstance)
         if self._np_thread and self._np_thread.is_alive():
             self._np_thread.join(timeout=3)
@@ -4915,7 +4920,8 @@ class _SshAgentEngine:
         def wndproc(hwnd, msg, wparam, lparam):
             try:
                 if msg == 0x0002:  # WM_DESTROY
-                    PostQuitMessage(0)
+                    if not getattr(engine, '_subclassed', False):
+                        PostQuitMessage(0)
                     return 0
                 if msg == WM_COPYDATA and lparam:
                     cds = ctypes.cast(lparam, ctypes.POINTER(COPYDATASTRUCT)).contents
@@ -4961,6 +4967,12 @@ class _SshAgentEngine:
                         CloseHandle(hmap)
 
                     return 1
+                # If subclassing an existing window, forward to original wndproc
+                old_wp = getattr(engine, '_old_wndproc', None)
+                if old_wp:
+                    WNDPROCTYPE2 = ctypes.WINFUNCTYPE(LRESULT, ctypes.wintypes.HWND, ctypes.wintypes.UINT, ctypes.wintypes.WPARAM, ctypes.wintypes.LPARAM)
+                    orig_proc = WNDPROCTYPE2(old_wp)
+                    return orig_proc(hwnd, msg, wparam, lparam)
                 return DefWindowProcW(hwnd, msg, wparam, lparam)
             except Exception:
                 try:
@@ -5004,10 +5016,37 @@ class _SshAgentEngine:
         wc.lpszMenuName = None
         wc.lpszClassName = "Pageant"
 
+        # Check if a Pageant window already exists (real Pageant or zombie)
+        FindWindowW = user32.FindWindowW
+        FindWindowW.argtypes = [ctypes.wintypes.LPCWSTR, ctypes.wintypes.LPCWSTR]
+        FindWindowW.restype = ctypes.wintypes.HWND
+        existing_hwnd = FindWindowW("Pageant", "Pageant")
+
         atom = user32.RegisterClassW(ctypes.byref(wc))
         if not atom:
             err1 = GetLastError()
-            alog(f"[shm] RegisterClassW failed, err={err1}, unregistering old class and retrying...", "warning")
+            alog(f"[shm] RegisterClassW failed, err={err1}", "warning")
+
+            if existing_hwnd:
+                alog(f"[shm] Found existing Pageant window hwnd=0x{existing_hwnd:08x}, subclassing...")
+                # Subclass existing window to intercept WM_COPYDATA
+                GWLP_WNDPROC = -4
+                SetWindowLongPtrW = user32.SetWindowLongPtrW
+                SetWindowLongPtrW.argtypes = [ctypes.wintypes.HWND, ctypes.c_int, ctypes.c_void_p]
+                SetWindowLongPtrW.restype = ctypes.c_void_p
+                old_wndproc = SetWindowLongPtrW(existing_hwnd, GWLP_WNDPROC, ctypes.cast(wndproc, ctypes.c_void_p))
+                if old_wndproc:
+                    self._old_wndproc = old_wndproc
+                    self._hwnd = existing_hwnd
+                    self._subclassed = True
+                    alog(f"[shm] Subclassed existing Pageant window")
+                    return
+                else:
+                    alog(f"[shm] SetWindowLongPtrW failed, err={GetLastError()}", "error")
+                    return
+
+            # No window exists — stale class registration. Try to unregister by
+            # finding the module handle that originally registered the class.
             if user32.UnregisterClassW("Pageant", hinstance):
                 atom = user32.RegisterClassW(ctypes.byref(wc))
                 if not atom:
@@ -5015,9 +5054,42 @@ class _SshAgentEngine:
                     alog(f"[shm] RegisterClassW failed twice, err={err2}", "error")
                     return
             else:
-                err2 = GetLastError()
-                alog(f"[shm] UnregisterClassW failed, err={err2}, cannot create window", "error")
-                return
+                # Class was registered by another module; use GetClassInfoW to find it
+                class WNDCLASSEX(ctypes.Structure):
+                    _fields_ = [
+                        ("cbSize", ctypes.wintypes.UINT),
+                        ("style", ctypes.wintypes.UINT),
+                        ("lpfnWndProc", ctypes.c_void_p),
+                        ("cbClsExtra", ctypes.c_int),
+                        ("cbWndExtra", ctypes.c_int),
+                        ("hInstance", ctypes.wintypes.HINSTANCE),
+                        ("hIcon", ctypes.wintypes.HICON),
+                        ("hCursor", ctypes.wintypes.HCURSOR),
+                        ("hbrBackground", ctypes.wintypes.HBRUSH),
+                        ("lpszMenuName", ctypes.wintypes.LPCWSTR),
+                        ("lpszClassName", ctypes.wintypes.LPCWSTR),
+                        ("hIconSm", ctypes.wintypes.HICON),
+                    ]
+                ci = WNDCLASSEX()
+                ci.cbSize = ctypes.sizeof(WNDCLASSEX)
+                if user32.GetClassInfoExW(None, "Pageant", ctypes.byref(ci)):
+                    actual_hinst = ci.hInstance
+                    if user32.UnregisterClassW("Pageant", actual_hinst):
+                        atom = user32.RegisterClassW(ctypes.byref(wc))
+                        if atom:
+                            alog(f"[shm] Re-registered Pageant class with hinstance=0x{actual_hinst:08x}")
+                        else:
+                            err2 = GetLastError()
+                            alog(f"[shm] RegisterClassW still fails after unregister, err={err2}", "error")
+                            return
+                    else:
+                        err2 = GetLastError()
+                        alog(f"[shm] UnregisterClassW with hinstance=0x{actual_hinst:08x} failed, err={err2}", "error")
+                        return
+                else:
+                    err2 = GetLastError()
+                    alog(f"[shm] GetClassInfoExW failed, err={err2}, cannot create window", "error")
+                    return
 
         CreateWindowExW = user32.CreateWindowExW
         CreateWindowExW.argtypes = [ctypes.wintypes.DWORD, ctypes.wintypes.LPCWSTR, ctypes.wintypes.LPCWSTR, ctypes.wintypes.DWORD, ctypes.wintypes.INT, ctypes.wintypes.INT, ctypes.wintypes.INT, ctypes.wintypes.INT, ctypes.wintypes.HWND, ctypes.wintypes.HMENU, ctypes.wintypes.HINSTANCE, ctypes.wintypes.LPVOID]

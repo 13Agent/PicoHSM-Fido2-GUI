@@ -1,11 +1,16 @@
 # -*- mode: python ; coding: utf-8 -*-
+import fido2
+import os
 
+_fido2_dir = os.path.dirname(fido2.__file__)
 
 a = Analysis(
     ['hsm_guir.py'],
     pathex=[],
     binaries=[],
-    datas=[('C:\\Users\\vboxuser\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\site-packages\\fido2\\public_suffix_list.dat', 'fido2')],
+    datas=[
+        (os.path.join(_fido2_dir, 'public_suffix_list.dat'), 'fido2'),
+    ],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
