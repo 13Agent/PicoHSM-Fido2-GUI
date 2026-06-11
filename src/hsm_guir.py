@@ -4551,7 +4551,7 @@ class _SshAgentEngine:
                     return None
                 if len(sig) == 64:
                     alog("[sign] Ed25519 OK: raw 64 bytes")
-                    self._inc_stat('ssh_signs')
+                    self.app._inc_stat('ssh_signs')
                     return sig
                 if len(sig) > 64 and sig[0] == 0x30:
                     alog("[sign] Ed25519: DER-wrapped, trying to unpack")
@@ -4563,7 +4563,7 @@ class _SshAgentEngine:
                         result = r_bytes + s_bytes
                         if len(result) == 64:
                             alog("[sign] Ed25519 OK: DER unpacked to 64 bytes")
-                            self._inc_stat('ssh_signs')
+                            self.app._inc_stat('ssh_signs')
                             return result
                 alog(f"[sign] Ed25519 FAIL: unexpected sig format len={len(sig)} first_byte={sig[0]:02x}", 'error')
                 return None
@@ -4579,7 +4579,7 @@ class _SshAgentEngine:
                     r_bytes = r.to_bytes(pad, "big")
                     s_bytes = s.to_bytes(pad, "big")
                     alog(f"[sign] ECDSA OK: {pad*2} bytes")
-                    self._inc_stat('ssh_signs')
+                    self.app._inc_stat('ssh_signs')
                     return r_bytes + s_bytes
                 alog(f"[sign] ECDSA FAIL: DER parse failed", 'error')
                 return None
@@ -4615,7 +4615,7 @@ class _SshAgentEngine:
                 alog(f"[sign] RSA k={k} di_len={len(di)} pad_len={pad_len} padded_len={len(padded)}")
                 result = bytes(self.hsm.sign(kid, padded, scheme=Algorithm.ALGO_RSA_RAW))
                 alog(f"[sign] RSA OK: {len(result)} bytes sig_prefix={result[:8].hex()}")
-                self._inc_stat('ssh_signs')
+                self.app._inc_stat('ssh_signs')
                 return result
         except Exception as e:
             import traceback
